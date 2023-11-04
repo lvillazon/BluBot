@@ -6,7 +6,6 @@ import time  # for delays
 from collections import deque  # to queue intermediate finger positions
 
 import Adafruit_PCA9685  # support for the servo hat
-import pygame  # used for keyboard input
 
 import paho.mqtt.client as mqtt  # MQTT used to send/receive data via ethernet
 BROKER = "192.168.187.205"  # 187.205 is BB.CD in hex (BlueBot CyberDeck)
@@ -243,72 +242,6 @@ class Hand:
                     print('0', end='')
              self.fingers.reverse() # swap back
         
-def input_digit():
-    # wait for one of the number keys to be pressed and return that
-    # any other key returns -1
-    number_keys = (pygame.K_0,
-                   pygame.K_1, 
-                   pygame.K_2, 
-                   pygame.K_3, 
-                   pygame.K_4, 
-                   pygame.K_5, 
-                   pygame.K_6, 
-                   pygame.K_7, 
-                   pygame.K_8, 
-                   pygame.K_9)
-    while True:
-        for event in pygame.event.get():
-            if event.type == pygame.KEYDOWN:
-                if event.key in number_keys:
-                    return number_keys.index(event.key)
-                else:
-                    return -1
-
-def input_operator():
-    # wait for one of the arithmatic operator keys to be pressed and return that
-    # any other key returns -1
-    operator = ''
-    while True:
-        for event in pygame.event.get():
-            if event.type == pygame.KEYDOWN:
-                if event.key in (pygame.K_PLUS, pygame.K_EQUALS):
-                    operator = '+'
-                if event.key in (pygame.K_MINUS, pygame.K_UNDERSCORE):
-                    operator = '-'
-                if event.key in (pygame.K_SLASH, pygame.K_QUESTION):
-                    operator = '/'
-                if event.key in (pygame.K_ASTERISK, pygame.K_8):
-                    operator = '*'
-                if operator != '':
-                    return operator
-                else:
-                    return -1
-
-def input_number():
-    # input a 1 or 2 digit number
-    # press enter to return the number
-    digit1 = input_digit()
-    if digit1 != -1:
-        digit2 = input_digit()
-        if digit2 == -1: # single-digit number (because 2nd input was not a number)
-            return digit1
-        else:
-            return digit1*10 + digit2
-
-def asasd():
-    # get a 1 or 2 digit number
-    # then an arithmatic operator
-    # then another number
-    # return the result if between 1 and 5 or 0 otherwise
-    # if the operator isnt valid, skip the 2nd number and also return 0
-    num1 = input_number()
-    operator = input_operator()
-    if operator != -1:
-        num2 = input_number()
-        result = eval(str(num1) + operator + str(num2))
-        if result >=1 and result <=5:
-            return result
-    return 0    
 
 # message handler for MQTT
 def on_message(client, userdata, message):
@@ -353,18 +286,20 @@ def send_data(channel, data=None):
 
 # set up the environment
 left_hand = Hand()
-pygame.init()
-screen = pygame.display.set_mode((512,384))
-clock = pygame.time.Clock()
 finished = quit_flag = False
 
 # initialise MQTT for telemetry feed and commands
-cyberdeck = mqtt.Client()
-cyberdeck.on_message = on_message
-cyberdeck.connect(BROKER, PORT, KEEP_ALIVE)
-cyberdeck.subscribe(TELEMETRY_TOPIC)
-cyberdeck.subscribe(COMMAND_TOPIC)
-
+print("Connecting to MQTT broker...")
+try:
+    cyberdeck = mqtt.Client()
+    cyberdeck.on_message = on_message
+    cyberdeck.connect(BROKER, PORT, KEEP_ALIVE)
+    cyberdeck.subscribe(TELEMETRY_TOPIC)
+    cyberdeck.subscribe(COMMAND_TOPIC)
+    print("Connected!")
+except Exception as e:
+    print("Failed: {0}. Automatic retry in {1} seconds.".format(e, RECONNECT_RETRY))
+    
 print('Blubot starting up...')
 status = True  # True means ready
 # close and open as an obvious initialisation
@@ -387,24 +322,8 @@ gesture_map = {'z':left_hand.make_palm,
 status_timeout = 0
 # main loop
 while not finished:
-    # check for local keyboard events
-    for event in pygame.event.get():
-        if event.type == pygame.KEYDOWN:
-            # quit option
-            if quit_flag and event.key == pygame.K_y:
-                finished = True
-            if event.key == pygame.K_ESCAPE:
-                print('Exit? (y/n)')
-                quit_flag = True
-            else:
-                quit_flag = False
-                
-            # pass all printable ascii chars to the keypress command handler
-            if event.key in range(13, 127):  # ASCII characters inc carriage return
-                keypress = chr(event.key).lower()
-
     # keypress command handler
-    # processes any keypresses, whether local or remote
+    # processes any keypresses, received from cyberdeck
     if keypress:
         print("pressed", keypress)
         # individual finger/wrist control keys
@@ -471,8 +390,6 @@ while not finished:
     # clear keypress after it has been handled
     keypress = ''
 
-    #clock.tick(1) # not needed now, since we are contantly checking the MQTT messages
-    
     cyberdeck.loop(timeout=0.01)  # process MQTT betwork traffice, dispatch callbacks
     old_status = status
     status = left_hand.update()
